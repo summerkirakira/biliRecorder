@@ -1,7 +1,13 @@
 from pydantic import BaseModel, validator
 from enum import IntEnum
 import requests
-from config import get_config, save_config
+from config import get_config, save_config, Config
+from typing import Optional
+import asyncio
+import aiohttp
+import aiofiles
+from services.downloader import LiveDefaultDownloader
+from services.user_info import get_user_info_by_mid, UserInfo
 
 config = get_config()
 
@@ -71,7 +77,6 @@ class VideoStreamInfo(BaseModel):
 
 class LiveService:
     def __init__(self):
-        self.session = requests.Session()
         self.default_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36',
             'Referer': 'https://live.bilibili.com/',
@@ -86,57 +91,90 @@ class LiveService:
             'Cache-Control': 'no-cache',
             'Pragma': 'no-cache',
         }
-        self.session.headers.update(self.default_headers)
-        self.session.cookies.update({
+        self.cookies = {
             'SESSDATA': config.SESSDATA,
             'bili_jct': config.bili_jct,
             'DedeUserID': config.DedeUserID,
             'DedeUserID__ckMd5': config.DedeUserID__ckMd5,
-        })
+        }
+        self.session = None
 
-    def get_room_info(self, room_id: int) -> RoomInfo:
+    async def get_room_info(self, room_id: int) -> RoomInfo:
         # 获取房间信息
+        if self.session is None:
+            self.session = aiohttp.ClientSession(headers=self.default_headers, cookies=self.cookies)
         url = 'https://api.live.bilibili.com/room/v1/Room/get_info'
         params = {
             'room_id': room_id
         }
-        response = self.session.get(url, params=params)
-        response.raise_for_status()
-        return RoomInfo.parse_obj(response.json())
+        async with self.session.get(url, params=params) as response:
+            return RoomInfo.parse_obj(await response.json())
 
-    def get_video_stream_info(self, room_id: int) -> VideoStreamInfo:
+    async def get_video_stream_info(self, room_id: int, qn: int) -> VideoStreamInfo:
         # 获取视频流信息
         url = 'https://api.live.bilibili.com/room/v1/Room/playUrl'
         params = {
             'cid': room_id,
-            'qn': 10000,
+            'qn': qn,
             'platform': 'web'
         }
-        response = self.session.get(url, params=params)
-        response.raise_for_status()
-        return VideoStreamInfo.parse_obj(response.json())
+        async with self.session.get(url, params=params) as response:
+            return VideoStreamInfo.parse_obj(await response.json())
 
-    def get_video_stream_url(self, room_id: int) -> str:
+    async def get_video_stream_url(self, room_id: int) -> str:
         # 获取视频流链接
-        video_stream_info = self.get_video_stream_info(room_id)
+        video_stream_info = await self.get_video_stream_info(room_id, 10000)
         if video_stream_info.code != VideoStreamInfo.Code.SUCCESS:
             raise ValueError(f'获取视频流信息失败: {video_stream_info.message}')
         return video_stream_info.data.durl[0].url
 
-    def download_video_stream(self, room_id: int, path: str):
-        # 下载视频流
-        url = self.get_video_stream_url(room_id)
-        with open(path, 'wb') as f:
-            with self.session.get(url, stream=True) as response:
-                response.raise_for_status()
-                for chunk in response.iter_content(chunk_size=1024):
-                    f.write(chunk)
+    class DownloadStatus(BaseModel):
+        class Status(IntEnum):
+            DOWNLOADING = 0
+            FINISHED = 1
+            FAILED = 2
+
+        status: Status
+        progress: int = 0
+        start_time: int = 0
+
+    class MonitorRoom:
+        def __init__(self, room_config: Config.MonitorLiveRoom):
+            self.room_id = room_config.short_id
+            self.live = False
+            self.down_video = False
+            self.room_config = room_config
+            self.room_info: Optional[RoomInfo] = None
+            self.download_status: Optional[LiveService.DownloadStatus] = None
+            self.downloader: Optional[LiveDefaultDownloader] = None
+
+        async def update_room_info(self):
+            while True:
+                self.room_info = await live_service.get_room_info(self.room_id)
+                self.live = self.room_info.data.live_status == RoomInfo.Data.LiveStatus.LIVE
+                if self.live and self.download_status is None and self.room_config.auto_download:
+                    url = await live_service.get_video_stream_url(self.room_id)
+                    asyncio.get_running_loop().create_task(self.download_live_video(url))
+                    self.download_status = LiveService.DownloadStatus(status=LiveService.DownloadStatus.Status.DOWNLOADING)
+                await asyncio.sleep(5)
+
+        async def download_live_video(self, url: str):
+            """
+            下载直播视频
+            """
+            self.download_status = LiveService.DownloadStatus(status=LiveService.DownloadStatus.Status.DOWNLOADING)
+            self.downloader = LiveDefaultDownloader(url, '/Users/forever/PycharmProjects/biliRecorder', self.room_info)
+            self.download_status = LiveService.DownloadStatus(status=LiveService.DownloadStatus.Status.FINISHED)
+            self.downloader.download()
+            while True:
+                await asyncio.sleep(1)
+                print(self.downloader.get_download_status())
 
 
-if __name__ == '__main__':
-    live_service = LiveService()
-    # room_info = live_service.get_room_info(22301377)
-    # print(room_info)
-    # video_stream_url = live_service.get_video_stream_url(1)
-    # print(video_stream_url)
-    live_service.download_video_stream(545240, 'test.flv')
+live_service = LiveService()
+
+room1 = live_service.MonitorRoom(Config.MonitorLiveRoom(short_id=213, auto_download=True))
+
+asyncio.get_event_loop().run_until_complete(room1.update_room_info())
+
+

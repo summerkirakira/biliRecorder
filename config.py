@@ -1,18 +1,37 @@
 from pydantic import BaseModel
 import os
 from typing import Optional
+from enum import IntEnum
 
 
 class Config(BaseModel):
+    class LiveConfig(BaseModel):
+        class DownloadConfig(BaseModel):
+            class DownloadType(IntEnum):
+                DEFAULT = 1
+                CUSTOM = 2
+
+            download_type: DownloadType = DownloadType.DEFAULT
+            custom_downloader: Optional[str] = None
+        download_format: str = '%title-%Y年%m%月%d%日-%H点%M分场'
+
+        download: DownloadConfig = DownloadConfig()
+
     class MonitorLiveRoom(BaseModel):
+        class Quality(IntEnum):
+            FLUENT = 80
+            STANDARD = 150
+            HIGH = 400
+            SUPER = 10000
         short_id: int
         auto_download: bool
         auto_download_path: Optional[str]
-        auto_download_format: Optional[str]
+        auto_download_quality: Quality = Quality.SUPER
     SESSDATA: Optional[str]
     bili_jct: Optional[str]
     DedeUserID: Optional[str]
     DedeUserID__ckMd5: Optional[str]
+    live_config: LiveConfig = LiveConfig()
 
 
 def get_config() -> Config:
