@@ -14,6 +14,11 @@ from services.user_info import get_user_info_by_mid, UserInfo
 
 class Downloader:
 
+    running_downloaders: list['Downloader'] = []
+
+    def __str__(self):
+        return f'{self.__class__.__name__}({self.url}, {self.path})'
+
     class DownloadStatus(BaseModel):
 
         class Status(IntEnum):
@@ -35,28 +40,14 @@ class Downloader:
         self.session = None
         self.mid = mid
         config = get_config()
-        self.cookies = {
-            'SESSDATA': config.SESSDATA,
-            'bili_jct': config.bili_jct,
-            'DedeUserID': config.DedeUserID,
-            'DedeUserID__ckMd5': config.DedeUserID__ckMd5,
-        }
+        self.cookies = config.cookies
         self.default_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36',
-            'Referer': 'https://live.bilibili.com/',
-            'Origin': 'https://live.bilibili.com',
-            'Sec-Fetch-Site': 'same-site',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Dest': 'empty',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-            'Accept': 'application/json, text/plain, */*',
-            'Connection': 'keep-alive',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache',
+            'Referer': 'https://live.bilibili.com/'
         }
         self.download_status = self.DownloadStatus()
         self.user_info: Optional[UserInfo] = None
+        self.running_downloaders.append(self)
 
     @abstractmethod
     async def _download(self):
@@ -67,6 +58,9 @@ class Downloader:
         loop = asyncio.get_running_loop()
         loop.create_task(self._download())
 
+    def cancel(self):
+        self.download_status.status = self.DownloadStatus.Status.CANCELED
+
     async def create_session(self):
         self.session = aiohttp.ClientSession(cookies=self.cookies, headers=self.default_headers)
         return self.session
@@ -76,6 +70,9 @@ class Downloader:
 
 
 class LiveDefaultDownloader(Downloader):
+
+    def __str__(self):
+        return f'[{self.__class__.__name__}] {self.path}, 房间号：{self.room_info.data.room_id})'
 
     def __init__(self, url: str, path: str, room_info):
         super().__init__(url, path, room_info.data.room_id)
@@ -93,10 +90,18 @@ class LiveDefaultDownloader(Downloader):
                      )
         file_name = time.strftime(file_name, time.localtime()) + '.flv'
         async with aiofiles.open(self.path / self.user_info.data.card.name / file_name, 'wb') as f:
-            async with self.session.get(self.url) as response:
-                async for chunk in response.content.iter_chunked(1024):
-                    self.download_status.current_downloaded_size += len(chunk)
-                    self.download_status.total_size = self.download_status.current_downloaded_size
-                    self.download_status.status = self.DownloadStatus.Status.DOWNLOADING
-                    await f.write(chunk)
+            while True:
+                try:
+                    async with self.session.get(self.url) as response:
+                        async for chunk in response.content.iter_chunked(1024):
+                            self.download_status.current_downloaded_size += len(chunk)
+                            self.download_status.total_size = self.download_status.current_downloaded_size
+                            self.download_status.status = self.DownloadStatus.Status.DOWNLOADING
+                            await f.write(chunk)
+                except Exception as e:
+                    if self.download_status.status == self.DownloadStatus.Status.CANCELED:
+                        self.download_status.status = self.DownloadStatus.Status.UNDEFINED
+                        return
+                    logger.error(f"下载失败，正在重试，错误信息：{e}")
+
 

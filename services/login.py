@@ -29,6 +29,7 @@ class BLogin:
         self.DedeUserID: Optional[str] = None
         self.DedeUserID__ckMd5: Optional[str] = None
         self.sid: Optional[str] = None
+        self.cookies: Optional[dict] = None
 
     class LoginType(Enum):
         QR = 1
@@ -45,12 +46,12 @@ class BLogin:
         pass
 
     def update_login_config(self):
-
         config = get_config()
         config.SESSDATA = self.SESSDATA
         config.bili_jct = self.bili_jct
         config.DedeUserID = self.DedeUserID
         config.DedeUserID__ckMd5 = self.DedeUserID__ckMd5
+        config.cookies = self.cookies
         save_config(config)
 
 
@@ -113,6 +114,7 @@ class QRLogin(BLogin):
                 **login_status.json()
             )
             if login_status_response.data.code == self.QRRequestStatusResponse.Code.SUCCESS:
+                self.cookies = login_status.cookies.get_dict()
                 for key, value in self.session.cookies.get_dict().items():
                     if key == "SESSDATA":
                         self.SESSDATA = value
@@ -150,10 +152,4 @@ class QRLogin(BLogin):
 def login():
     qr_login = QRLogin()
     qr_login.login()
-    a = 1
-
-
-
-
-
 

@@ -31,7 +31,10 @@ class Config(BaseModel):
     bili_jct: Optional[str]
     DedeUserID: Optional[str]
     DedeUserID__ckMd5: Optional[str]
+    cookies: Optional[dict]
     live_config: LiveConfig = LiveConfig()
+
+    monitor_live_rooms: list[MonitorLiveRoom] = []
 
 
 def get_config() -> Config:
