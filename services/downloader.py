@@ -10,6 +10,8 @@ from enum import IntEnum
 from pathlib import Path
 import aiofiles
 from services.user_info import get_user_info_by_mid, UserInfo
+from services.util import Danmu
+from services.danmu_converter import get_video_width_height, generate_ass
 
 
 class Downloader:
@@ -33,6 +35,7 @@ class Downloader:
         target_path: str = ''
         file_name: str = ''
         status: Status = Status.UNDEFINED
+        start_time: int = 0
 
     def __init__(self, url, path, mid):
         self.url = url
@@ -57,6 +60,7 @@ class Downloader:
     def download(self):
         loop = asyncio.get_running_loop()
         loop.create_task(self._download())
+        self.download_status.start_time = time.time()
 
     def cancel(self):
         self.download_status.status = self.DownloadStatus.Status.CANCELED
@@ -89,11 +93,14 @@ class LiveDefaultDownloader(Downloader):
                      .replace('%title', self.room_info.data.title)
                      )
         file_name = time.strftime(file_name, time.localtime()) + '.flv'
+        self.download_status.target_path = str(self.path / self.user_info.data.card.name / file_name)
         async with aiofiles.open(self.path / self.user_info.data.card.name / file_name, 'wb') as f:
-            while True:
+            while self.download_status.status != self.DownloadStatus.Status.CANCELED:
                 try:
                     async with self.session.get(self.url) as response:
                         async for chunk in response.content.iter_chunked(1024):
+                            if self.download_status.status == self.DownloadStatus.Status.CANCELED:
+                                break
                             self.download_status.current_downloaded_size += len(chunk)
                             self.download_status.total_size = self.download_status.current_downloaded_size
                             self.download_status.status = self.DownloadStatus.Status.DOWNLOADING
@@ -104,4 +111,13 @@ class LiveDefaultDownloader(Downloader):
                         return
                     logger.error(f"下载失败，正在重试，错误信息：{e}")
 
+    async def save_danmus(self, damus: list[Danmu]):
+        current_time = time.time() * 1000
+        valid_danmus = [damu for damu in damus if (current_time >= damu.send_time >= self.download_status.start_time)]
+        for damu in valid_danmus:
+            damu.appear_time = (damu.send_time - self.download_status.start_time * 1000) / 1000
+        video_file = Path(self.download_status.target_path)
+        video_width, video_height = get_video_width_height(video_file)
+        ass_file = video_file.with_suffix('.zh-CN.ass')
+        generate_ass(Danmu.generate_danmu_xml(valid_danmus), str(ass_file), video_width, video_height)
 

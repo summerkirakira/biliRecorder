@@ -19,12 +19,8 @@
   },
   "monitor_live_rooms": [
     {
-      "short_id": 25158669,
-      "auto_download": false
-    },
-    {
-      "short_id": 25166222,
-      "auto_download": false
+      "short_id": 21402309,
+      "auto_download": true
     }
   ]
 }

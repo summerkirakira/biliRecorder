@@ -160,3 +160,4 @@ cython_debug/
 .idea/
 **/.Ds_Store
 **/*.flv
+**/*.ass
