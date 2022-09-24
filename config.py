@@ -48,4 +48,4 @@ def get_config() -> Config:
 
 def save_config(config: Config):
     with open('config.json', 'w') as f:
-        f.write(config.json())
+        f.write(config.json(indent=4, ensure_ascii=False))

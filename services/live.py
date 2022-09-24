@@ -256,7 +256,12 @@ class LiveService:
         async def send_ws_message(self, command: 'LiveService.MonitorRoom.MessageStreamCommand', message: bytes):
             message = self.generate_message_stream(command, message)
             logger.debug(f'发送消息: {message}')
-            await self.message_ws.send(message)
+            try:
+                await self.message_ws.send(message)
+            except Exception as e:
+                logger.error(f'发送消息失败: {e}')
+                await self.close_session()
+                await self.init_message_ws()
             self.message_stream_data.current_command_count += 1
 
         async def send_heartbeat(self):
@@ -436,7 +441,7 @@ def start_monitor():
             asyncio.get_running_loop().create_task(monitor_room.update_room_info())
         except RuntimeError:
             asyncio.get_event_loop().create_task(monitor_room.update_room_info())
-            asyncio.get_event_loop().create_task(test(monitor_room))
+            # asyncio.get_event_loop().create_task(test(monitor_room))
 
 
 start_monitor()

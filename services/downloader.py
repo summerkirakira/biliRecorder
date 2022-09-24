@@ -12,7 +12,7 @@ import aiofiles
 from services.user_info import get_user_info_by_mid, UserInfo
 from services.util import Danmu
 from services.danmu_converter import get_video_width_height, generate_ass
-from services.ass_render import render_ass, fix_video
+from services.ass_render import fix_video
 
 
 class Downloader:
@@ -112,6 +112,7 @@ class LiveDefaultDownloader(Downloader):
                         return
                     logger.error(f'下载出错，正在重试')
                     logger.exception(e)
+        logger.info('正在保存视频...')
         await fix_video(Path(self.download_status.target_path))
 
     async def save_danmus(self, damus: list[Danmu]):
