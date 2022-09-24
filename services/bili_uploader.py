@@ -13,19 +13,100 @@ from os.path import splitext, basename
 from typing import Union, Any
 from urllib import parse
 from urllib.parse import quote
-
+from functools import reduce
 import aiohttp
 import requests.utils
 import rsa
 import xml.etree.ElementTree as ET
 from requests.adapters import HTTPAdapter, Retry
+import subprocess
 
-from biliup.config import config
-from biliup.engine import Plugin
-from biliup.engine.upload import UploadBase, logger
+from loguru import logger
+
+from pathlib import Path
+import shutil
 
 
-@Plugin.upload(platform="bili_web")
+class UploadBase:
+    def __init__(self, principal, data, persistence_path=None, postprocessor=None):
+        self.principal = principal
+        self.persistence_path = persistence_path
+        self.data = data
+        self.post_processor = postprocessor
+
+    # @property
+    @staticmethod
+    def file_list(index):
+        file_list = []
+        for file_name in os.listdir('.'):
+            if index in file_name and os.path.isfile(file_name):
+                file_list.append(file_name)
+        file_list = sorted(file_list)
+        return file_list
+
+    @staticmethod
+    def remove_filelist(file_list):
+        for r in file_list:
+            os.remove(r)
+            logger.info('删除-' + r)
+
+    def filter_file(self, index):
+        file_list = UploadBase.file_list(index)
+        if len(file_list) == 0:
+            return False
+        for r in file_list:
+            file_size = os.path.getsize(r) / 1024 / 1024
+            threshold = self.data.get('threshold') if self.data.get('threshold') else 2
+            if file_size <= threshold:
+                os.remove(r)
+                logger.info('过滤删除-' + r)
+        file_list = UploadBase.file_list(index)
+        if len(file_list) == 0:
+            logger.info('视频过滤后无文件可传')
+            return False
+        for f in file_list:
+            if f.endswith('.part'):
+                shutil.move(f, os.path.splitext(f)[0])
+                logger.info('%s存在已更名' % f)
+        return True
+
+    def upload(self, file_list):
+        raise NotImplementedError()
+
+    def start(self):
+        if self.filter_file(self.principal):
+            logger.info('准备上传' + self.data["format_title"])
+            needed2process = self.upload(UploadBase.file_list(self.principal))
+            if needed2process:
+                self.postprocessor(needed2process)
+
+    def postprocessor(self, data):
+        # data = file_list
+        if self.post_processor is None:
+            return self.remove_filelist(data)
+        for post_processor in self.post_processor:
+            if post_processor == 'rm':
+                self.remove_filelist(data)
+                continue
+            if post_processor.get('mv'):
+                for file in data:
+                    path = Path(file)
+                    dest = Path(post_processor['mv'])
+                    if not dest.is_dir():
+                        dest.mkdir(parents=True, exist_ok=True)
+                    #path.rename(dest / path.name)
+                    shutil.move(path, dest / path.name)
+                    logger.info(f"move to {(dest / path.name).absolute()}")
+            if post_processor.get('run'):
+                process = subprocess.run(
+                    post_processor['run'], shell=True, input=reduce(lambda x, y: x + str(Path(y).absolute()) + '\n', data, ''),
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                if process.returncode != 0:
+                    logger.error(process.stdout)
+                    raise Exception("PostProcessorRunTimeError")
+                logger.info(process.stdout.rstrip())
+
+
 class BiliWeb(UploadBase):
     def __init__(
             self, principal, data, user, submit_api=None, copyright=2, postprocessor=None, dtime=None,
@@ -143,7 +224,7 @@ class BiliBili:
     def login(self, persistence_path, user):
         self.persistence_path = persistence_path
         if os.path.isfile(persistence_path):
-            print('使用持久化内容上传')
+            logger.info('使用持久化内容上传')
             self.load()
         if not self.cookies and user.get('cookies'):
             self.cookies = user['cookies']
@@ -156,9 +237,8 @@ class BiliBili:
                 self.login_by_cookies(self.cookies)
             except:
                 logger.exception('login error')
-                self.login_by_password(**self.account)
         else:
-            self.login_by_password(**self.account)
+            raise Exception('请在config文件中填入密钥')
         self.store()
 
     def load(self):
@@ -205,47 +285,8 @@ class BiliBili:
         if r and r["code"] == 0:
             return r
 
-    def login_by_password(self, username, password):
-        print('使用账号上传')
-        key_hash, pub_key = self.get_key()
-        encrypt_password = base64.b64encode(rsa.encrypt(f'{key_hash}{password}'.encode(), pub_key))
-        payload = {
-            "actionKey": 'appkey',
-            "appkey": self.app_key,
-            "build": 6270200,
-            "captcha": '',
-            "challenge": '',
-            "channel": 'bili',
-            "device": 'phone',
-            "mobi_app": 'android',
-            "password": encrypt_password,
-            "permission": 'ALL',
-            "platform": 'android',
-            "seccode": "",
-            "subid": 1,
-            "ts": int(time.time()),
-            "username": username,
-            "validate": "",
-        }
-        response = self.__session.post("https://passport.bilibili.com/x/passport-login/oauth2/login", timeout=5,
-                                       data={**payload, 'sign': self.sign(parse.urlencode(payload))})
-        r = response.json()
-        if r['code'] != 0 or r.get('data') is None or r['data'].get('cookie_info') is None:
-            raise RuntimeError(r)
-        try:
-            for cookie in r['data']['cookie_info']['cookies']:
-                self.__session.cookies.set(cookie['name'], cookie['value'])
-                if 'bili_jct' == cookie['name']:
-                    self.__bili_jct = cookie['value']
-            self.cookies = self.__session.cookies.get_dict()
-            self.access_token = r['data']['token_info']['access_token']
-            self.refresh_token = r['data']['token_info']['refresh_token']
-        except:
-            raise RuntimeError(r)
-        return r
-
     def login_by_cookies(self, cookie):
-        print('使用cookies上传')
+        logger.info('使用cookies上传')
         requests.utils.add_dict_to_cookiejar(self.__session.cookies, cookie)
         if 'bili_jct' in cookie:
             self.__bili_jct = cookie["bili_jct"]
@@ -281,7 +322,7 @@ class BiliBili:
             start = time.perf_counter()
             test = self.__session.request(method, f"https:{line['probe_url']}", data=data, timeout=30)
             cost = time.perf_counter() - start
-            print(line['query'], cost)
+            logger.info(line['query'], cost)
             if test.status_code != 200:
                 return
             if not min_cost or min_cost > cost:
@@ -350,8 +391,11 @@ class BiliBili:
                 timeout=5)
             return asyncio.run(upload(f, total_size, ret.json(), tasks=tasks, title=title))
 
-    async def cos(self, file, total_size, ret, chunk_size=10485760, tasks=3, internal=False):
-        filename = file.name
+    async def cos(self, file, total_size, ret, chunk_size=10485760, tasks=3, internal=False, title=None):
+        if title is None:
+            filename = file.name
+        else:
+            filename = title
         url = ret["url"]
         if internal:
             url = url.replace("cos.accelerate", "cos-internal.ap-shanghai")
@@ -424,8 +468,11 @@ class BiliBili:
                 logger.info("上传出现问题，尝试重连，次数：" + str(ii))
                 time.sleep(15)
 
-    async def kodo(self, file, total_size, ret, chunk_size=4194304, tasks=3):
-        filename = file.name
+    async def kodo(self, file, total_size, ret, chunk_size=4194304, tasks=3, title=None):
+        if title is None:
+            filename = file.name
+        else:
+            filename = title
         bili_filename = ret['bili_filename']
         key = ret['key']
         endpoint = f"https:{ret['endpoint']}"
@@ -584,14 +631,13 @@ class BiliBili:
         if not self.access_token:
             if self.account is None:
                 raise RuntimeError("Access token is required, but account and access_token does not exist!")
-            self.login_by_password(**self.account)
             self.store()
         while True:
             ret = self.__session.post(f'http://member.bilibili.com/x/vu/client/add?access_key={self.access_token}',
                                       timeout=5, json=asdict(self.video)).json()
             if ret['code'] == -101:
                 logger.info(f'刷新token{ret}')
-                self.login_by_password(**config['user']['account'])
+                raise RuntimeError("Access token is invalid, please login again!")
                 self.store()
                 continue
             return ret

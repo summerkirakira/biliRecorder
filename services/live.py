@@ -2,21 +2,18 @@ import struct
 
 from pydantic import BaseModel, validator
 from enum import IntEnum
-import requests
 from config import get_config, save_config, Config
 from typing import Optional
 import asyncio
 import aiohttp
 import json
-import aiofiles
 from services.downloader import LiveDefaultDownloader
-from services.user_info import get_user_info_by_mid, UserInfo
 import websockets
 import zlib
 from loguru import logger
 import time
 from services.util import Danmu
-from services.ass_render import fix_video
+from services.exceptions import DownloadPathException
 
 config = get_config()
 
@@ -101,7 +98,12 @@ class LiveService:
     }
 
     def __init__(self):
-        self.cookies = config.cookies
+        self.cookies = {
+            'bili_jct': config.bili_jct,
+            'DedeUserID': config.DedeUserID,
+            'DedeUserID__ckMd5': config.DedeUserID__ckMd5,
+            'SESSDATA': config.SESSDATA,
+        }
         self.session = None
 
     async def get_room_info(self, room_id: int) -> RoomInfo:
@@ -184,6 +186,8 @@ class LiveService:
                             asyncio.get_running_loop().create_task(self.init_message_ws())
                         url = await live_service.get_video_stream_url(self.room_id)
                         asyncio.get_running_loop().create_task(self.download_live_video(url))
+                        if self.room_config.auto_upload.enabled and self.room_config.auto_upload.cover_path == 'AUTO':
+                            await self.download_live_image(self.room_info.data.user_cover)
                         self.download_status = LiveService.DownloadStatus(status=LiveService.DownloadStatus.Status.DOWNLOADING)
                     if self.room_info.data.live_status != RoomInfo.Data.LiveStatus.LIVE and self.download_status is not None:
                         self.live = False
@@ -192,12 +196,24 @@ class LiveService:
                     logger.error(f'更新房间信息失败: {e}')
                 await asyncio.sleep(10)
 
+        async def download_live_image(self, url: str):
+            # 下载直播封面
+            if self.session is None:
+                self.session = aiohttp.ClientSession(headers=self.default_headers)
+            async with self.session.get(url) as response:
+                with open(f'{self.room_config.short_id}.jpg', 'wb') as f:
+                    f.write(await response.read())
+
         async def download_live_video(self, url: str):
             """
             下载直播视频
             """
             self.download_status = LiveService.DownloadStatus(status=LiveService.DownloadStatus.Status.DOWNLOADING)
-            self.downloader = LiveDefaultDownloader(url, '/Users/forever/PycharmProjects/biliRecorder', self.room_info)
+            try:
+                self.downloader = LiveDefaultDownloader(url, self.room_config, self.room_info)
+            except DownloadPathException as e:
+                logger.error(f'请在配置文件中指定下载路径！: {e}')
+                exit(1)
             self.downloader.download()
             while True:
                 if self.download_status is None:
@@ -435,13 +451,17 @@ live_service = LiveService()
 
 
 def start_monitor():
+    # 开始监控
     for room_config in config.monitor_live_rooms:
+        if room_config.short_id == -1:
+            continue
         monitor_room = LiveService.MonitorRoom(room_config)
         try:
             asyncio.get_running_loop().create_task(monitor_room.update_room_info())
         except RuntimeError:
             asyncio.get_event_loop().create_task(monitor_room.update_room_info())
             # asyncio.get_event_loop().create_task(test(monitor_room))
+    logger.info(f'正在监听直播间: {", ".join([str(room_config.short_id) for room_config in config.monitor_live_rooms if room_config.short_id != -1])}')
 
 
 start_monitor()

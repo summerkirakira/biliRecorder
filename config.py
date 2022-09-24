@@ -23,29 +23,46 @@ class Config(BaseModel):
             STANDARD = 150
             HIGH = 400
             SUPER = 10000
-        short_id: int
-        auto_download: bool
+
+        class AutoUpload(BaseModel):
+            enabled: bool = False
+            title: str = '【直播录制】%title-%Y年%m%月%d%日-%H点%M分场'
+            desc: str = '直播录制'
+            source: str = 'https://live.bilibili.com/'
+            tags: list[str] = ['直播录制']
+            tid: int = 27
+            cover_path: str = 'AUTO'
+
+        short_id: int = -1
+        auto_download: bool = False
         auto_download_path: Optional[str]
         auto_download_quality: Quality = Quality.SUPER
+        auto_upload: AutoUpload = AutoUpload()
     mid: int = 0
     SESSDATA: Optional[str]
     bili_jct: Optional[str]
     DedeUserID: Optional[str]
     DedeUserID__ckMd5: Optional[str]
-    cookies: Optional[dict]
     refresh_token: Optional[str]
     live_config: LiveConfig = LiveConfig()
+    access_token: Optional[str]
+    monitor_live_rooms: list[MonitorLiveRoom] = [
+        MonitorLiveRoom(auto_download_path=None)
+    ]
 
-    monitor_live_rooms: list[MonitorLiveRoom] = []
+
+if not os.path.exists('config'):
+    os.mkdir('config')
 
 
 def get_config() -> Config:
-    if not os.path.exists('config.json'):
+    if not os.path.exists('config/config.json'):
+        save_config(Config())
         return Config()
-    config = Config.parse_file('config.json')
+    config = Config.parse_file('config/config.json')
     return config
 
 
 def save_config(config: Config):
-    with open('config.json', 'w') as f:
+    with open('config/config.json', 'w') as f:
         f.write(config.json(indent=4, ensure_ascii=False))

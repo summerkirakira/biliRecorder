@@ -13,6 +13,8 @@ from services.user_info import get_user_info_by_mid, UserInfo
 from services.util import Danmu
 from services.danmu_converter import get_video_width_height, generate_ass
 from services.ass_render import fix_video
+from services.exceptions import DownloadPathException
+from services.uploader import BiliBiliLiveUploader
 
 
 class Downloader:
@@ -38,13 +40,21 @@ class Downloader:
         status: Status = Status.UNDEFINED
         start_time: int = 0
 
-    def __init__(self, url, path, mid):
+    def __init__(self, url, room_config: Config.MonitorLiveRoom, mid):
+        if room_config.auto_download_path is None:
+            raise DownloadPathException('path 不能为空')
         self.url = url
-        self.path = Path(path)
+        self.room_config = room_config
+        self.path = Path(room_config.auto_download_path)
         self.session = None
         self.mid = mid
         config = get_config()
-        self.cookies = config.cookies
+        self.cookies = {
+            'SESSDATA': config.SESSDATA,
+            'bili_jct': config.bili_jct,
+            'DedeUserID': config.DedeUserID,
+            'DedeUserID__ckMd5': config.DedeUserID__ckMd5,
+        }
         self.default_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36',
             'Referer': 'https://live.bilibili.com/'
@@ -79,11 +89,12 @@ class LiveDefaultDownloader(Downloader):
     def __str__(self):
         return f'[{self.__class__.__name__}] {self.path}, 房间号：{self.room_info.data.room_id})'
 
-    def __init__(self, url: str, path: str, room_info):
-        super().__init__(url, path, room_info.data.room_id)
-        self.download_status.target_path = path
+    def __init__(self, url: str, room_config: Config.MonitorLiveRoom, room_info):
+        super().__init__(url, room_config, room_info.data.room_id)
+        self.download_status.target_path = room_config.auto_download_path
         self.room_info = room_info
 
+    @logger.catch
     async def _download(self):
         await super()._download()
         self.user_info = await get_user_info_by_mid(self.room_info.data.uid)
@@ -112,8 +123,51 @@ class LiveDefaultDownloader(Downloader):
                         return
                     logger.error(f'下载出错，正在重试')
                     logger.exception(e)
+        logger.opt(colors=True).info(f'<yellow>下载完成</yellow> 直播间：{self.room_info.data.title}已关闭')
         logger.info('正在保存视频...')
         await fix_video(Path(self.download_status.target_path))
+        logger.info('保存成功')
+        if self.room_config.auto_upload.enabled:
+            await self.upload()
+
+    async def upload(self):
+        if self.room_config.auto_upload.title is None:
+            logger.error('上传失败，标题不能为空')
+            return
+        if self.room_config.auto_upload.desc is None:
+            logger.error('上传失败，描述不能为空')
+            return
+        if self.room_config.auto_upload.tags is None:
+            logger.error('上传失败，标签不能为空')
+            return
+        if self.room_config.auto_upload.tid is None:
+            logger.error('上传失败，分区不能为空')
+            return
+        if self.room_config.auto_upload.source is None:
+            logger.error('上传失败，来源不能为空')
+            return
+
+        bill_uploader = BiliBiliLiveUploader()
+
+        bill_uploader.set_title(self.room_config.auto_upload.title.replace('%title', self.room_info.data.title)
+         )
+        bill_uploader.set_desc(self.room_config.auto_upload.desc)
+        bill_uploader.set_tags(self.room_config.auto_upload.tags)
+        bill_uploader.set_tid(self.room_config.auto_upload.tid)
+        bill_uploader.set_source(self.room_config.auto_upload.source)
+        if self.room_config.auto_upload.cover_path == 'AUTO':
+            bill_uploader.set_cover(f'{self.room_config.short_id}.jpg')
+        else:
+            bill_uploader.set_cover(self.room_config.auto_upload.cover)
+        bill_uploader.set_files([
+            {
+                'path': self.download_status.target_path,
+                'title': self.room_config.auto_upload.title,
+            }
+        ])
+        bill_uploader.start()
+
+        logger.info('正在上传视频...')
 
     async def save_danmus(self, damus: list[Danmu]):
         current_time = time.time() * 1000

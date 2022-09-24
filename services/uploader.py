@@ -4,7 +4,6 @@ from services.exceptions import NotAuthorizedException
 from abc import abstractmethod
 
 from threading import Thread
-from typing import Optional
 
 
 class Uploader(Thread):
@@ -22,21 +21,26 @@ class Uploader(Thread):
         pass
 
 
-class BiliBiliVtbLiveUploader(Uploader):
+class BiliBiliLiveUploader(Uploader):
 
     def __init__(self):
         super().__init__()
         self.cover_path = None
 
     def run(self):
-        lines = 'bda2'
+        lines = 'AUTO'
         tasks = 3
         with BiliBili(self.video) as bili:
             if self.cover_path is None:
                 raise Exception('未设置封面')
             bili.login("bili.cookies", {
-                'cookies': self.config.cookies,
-                'access_token': self.config.refresh_token,
+                'cookies': {
+                    'SESSDATA': self.config.SESSDATA,
+                    'bili_jct': self.config.bili_jct,
+                    'DedeUserID': self.config.DedeUserID,
+                    'DedeUserID__ckMd5': self.config.DedeUserID__ckMd5
+                },
+                'access_token': self.config.access_token,
             })
             self.video.cover = bili.cover_up(self.cover_path).replace('http:', '')
             for file in self.file_list:
