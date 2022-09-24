@@ -7,9 +7,7 @@ from loguru import logger
 from requests import Response
 from typing import Optional, Union
 from config import get_config, save_config
-import json
 import qrcode
-import sys
 
 config = get_config()
 
@@ -30,6 +28,8 @@ class BLogin:
         self.DedeUserID__ckMd5: Optional[str] = None
         self.sid: Optional[str] = None
         self.cookies: Optional[dict] = None
+        self.refresh_token = None
+        self.mid = None
 
     class LoginType(Enum):
         QR = 1
@@ -47,11 +47,13 @@ class BLogin:
 
     def update_login_config(self):
         config = get_config()
+        config.mid = self.mid
         config.SESSDATA = self.SESSDATA
         config.bili_jct = self.bili_jct
         config.DedeUserID = self.DedeUserID
         config.DedeUserID__ckMd5 = self.DedeUserID__ckMd5
         config.cookies = self.cookies
+        config.refresh_token = self.refresh_token
         save_config(config)
 
 
@@ -80,7 +82,16 @@ class QRLogin(BLogin):
         class Data(BaseModel):
             code: 'QRLogin.QRRequestStatusResponse.Code'
             message: str
+            refresh_token: str
 
+        data: Data
+
+    class NavUserInfo(BaseModel):
+        class Data(BaseModel):
+            isLogin: bool
+            mid: int
+            face: str
+            uname: str
         data: Data
 
     def __init__(self):
@@ -115,6 +126,7 @@ class QRLogin(BLogin):
             )
             if login_status_response.data.code == self.QRRequestStatusResponse.Code.SUCCESS:
                 self.cookies = login_status.cookies.get_dict()
+                self.refresh_token = login_status_response.data.refresh_token
                 for key, value in self.session.cookies.get_dict().items():
                     if key == "SESSDATA":
                         self.SESSDATA = value
@@ -133,7 +145,7 @@ class QRLogin(BLogin):
                 self.login_status = self.LoginStatus.FAILED
                 break
             elif login_status_response.data.code == self.QRRequestStatusResponse.Code.QR_NOT_SCANNED:
-                logger.info("二维码未扫描")
+                pass
             elif login_status_response.data.code == self.QRRequestStatusResponse.Code.QR_SCANNED:
                 logger.info("二维码已扫描")
             max_retry -= 1
@@ -144,9 +156,20 @@ class QRLogin(BLogin):
 
             time.sleep(1)
 
-        if self.login_status == self.LoginStatus.SUCCESS:
-            logger.success("登录成功")
-            self.update_login_config()
+        user_info: QRLogin.NavUserInfo = self.NavUserInfo(**self.session.get("https://api.bilibili.com/x/web-interface/nav").json())
+        if user_info.data.isLogin:
+            self.mid = user_info.data.mid
+            if self.login_status == self.LoginStatus.SUCCESS:
+                logger.success("登录成功")
+                self.update_login_config()
+        else:
+            logger.error("登录失败")
+            self.login_status = self.LoginStatus.FAILED
+
+    def get_nav_user_info(self) -> NavUserInfo:
+        # 获取导航栏用户信息
+        nav_user_info: Response = self.session.get("https://api.bilibili.com/x/web-interface/nav", headers=self.default_headers)
+        return self.NavUserInfo(**nav_user_info.json())
 
 
 def login():

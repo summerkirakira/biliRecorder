@@ -27,11 +27,13 @@ class Config(BaseModel):
         auto_download: bool
         auto_download_path: Optional[str]
         auto_download_quality: Quality = Quality.SUPER
+    mid: int = 0
     SESSDATA: Optional[str]
     bili_jct: Optional[str]
     DedeUserID: Optional[str]
     DedeUserID__ckMd5: Optional[str]
     cookies: Optional[dict]
+    refresh_token: Optional[str]
     live_config: LiveConfig = LiveConfig()
 
     monitor_live_rooms: list[MonitorLiveRoom] = []

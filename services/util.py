@@ -14,7 +14,10 @@ class Danmu(BaseModel):
     level: int = 11
 
     def __str__(self):
-        return f'<d p="{round(self.appear_time, 5)},{self.danmu_type},{self.font_size},{self.color},{int(self.send_time / 1000)},{self.pool},{self.mid_hash},{self.d_mid},{self.level}">{self.content}</d>'
+        if '<' in self.content or '>' in self.content or '&' in self.content:
+            return f'<d p="{round(self.appear_time, 5)},{self.danmu_type},{self.font_size},{self.color},{int(self.send_time / 1000)},{self.pool},{self.mid_hash},{self.d_mid},{self.level}"><![CDATA[{self.content}]]></d>'
+        else:
+            return f'<d p="{round(self.appear_time, 5)},{self.danmu_type},{self.font_size},{self.color},{int(self.send_time / 1000)},{self.pool},{self.mid_hash},{self.d_mid},{self.level}">{self.content}</d>'
 
     @classmethod
     def generate_danmu_xml(self, danmus: list['Danmu']):

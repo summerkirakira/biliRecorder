@@ -161,3 +161,4 @@ cython_debug/
 **/.Ds_Store
 **/*.flv
 **/*.ass
+config.json

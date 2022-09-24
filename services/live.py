@@ -16,6 +16,7 @@ import zlib
 from loguru import logger
 import time
 from services.util import Danmu
+from services.ass_render import fix_video
 
 config = get_config()
 
@@ -178,12 +179,15 @@ class LiveService:
                     self.room_info = await live_service.get_room_info(self.room_id)
                     self.room_id = self.room_info.data.room_id
                     self.live = self.room_info.data.live_status == RoomInfo.Data.LiveStatus.LIVE
-                    if self.message_stream_data is None:
-                        asyncio.get_running_loop().create_task(self.init_message_ws())
                     if self.live and self.download_status is None and self.room_config.auto_download:
+                        if self.message_stream_data is None:
+                            asyncio.get_running_loop().create_task(self.init_message_ws())
                         url = await live_service.get_video_stream_url(self.room_id)
                         asyncio.get_running_loop().create_task(self.download_live_video(url))
                         self.download_status = LiveService.DownloadStatus(status=LiveService.DownloadStatus.Status.DOWNLOADING)
+                    if self.room_info.data.live_status != RoomInfo.Data.LiveStatus.LIVE and self.download_status is not None:
+                        self.live = False
+                        await self.stop_download()
                 except Exception as e:
                     logger.error(f'更新房间信息失败: {e}')
                 await asyncio.sleep(10)
@@ -196,8 +200,12 @@ class LiveService:
             self.downloader = LiveDefaultDownloader(url, '/Users/forever/PycharmProjects/biliRecorder', self.room_info)
             self.downloader.download()
             while True:
-                await asyncio.sleep(5)
-                print(self.downloader.get_download_status())
+                if self.download_status is None:
+                    self.download_status = None
+                    self.downloader = None
+                    return
+                logger.info(f'正在录制直播间: {self.room_info.data.title}({self.room_info.data.room_id if self.room_info.data.short_id == 0 else self.room_info.data.short_id})，已录制: {self.downloader.get_download_status().current_downloaded_size / 1024 / 1024:.2f}MB')
+                await asyncio.sleep(10)
 
         async def get_live_message_stream_key(self, room_id: int) -> str:
             # 获取直播弹幕流密钥
@@ -215,7 +223,7 @@ class LiveService:
             key = await self.get_live_message_stream_key(self.room_id)
             logger.debug('弹幕流连接成功')
             message: bytes = json.dumps({
-                    'uid': 22000392,
+                    'uid': get_config().mid,
                     'roomid': self.room_id,
                     'protover': 2,
                     'platform': 'web',
@@ -257,10 +265,10 @@ class LiveService:
 
         async def receive_message(self):
             # 接收消息
-            while True:
+            while self.download_status is not None and self.download_status.status == LiveService.DownloadStatus.Status.DOWNLOADING:
                 try:
                     message = await self.message_ws.recv()
-                    logger.debug(f'接收消息: {message}')
+                    # logger.debug(f'接收消息: {message}')
                     try:
                         await self.handle_message(message)
                     except Exception as e:
@@ -268,11 +276,16 @@ class LiveService:
                 except Exception as e:
                     logger.error(f'接收消息出错: {e}')
                     break
+            await self.close_session()
+
+        async def close_session(self):
+            await self.session.close()
+            self.session = None
 
         async def send_heartbeat_loop(self):
-            while True:
-                await asyncio.sleep(25)
+            while self.download_status is not None:
                 await self.send_heartbeat()
+                await asyncio.sleep(25)
 
         async def handle_message(self, message: bytes):
             # 处理消息
@@ -285,7 +298,7 @@ class LiveService:
                 logger.debug('收到认证回复')
                 asyncio.get_running_loop().create_task(self.send_heartbeat_loop())
             elif operation == LiveService.MonitorRoom.MessageStreamCommand.COMMAND:
-                logger.debug('收到命令')
+                # logger.debug('收到命令')
                 if version == 2:
                     decompressed_message = zlib.decompress(payload)
                     commands = await self.extract_commands(decompressed_message)
@@ -293,7 +306,8 @@ class LiveService:
                     commands = [json.loads(payload.decode('utf-8'))]
                 for command in commands:
                     if command['cmd'] == 'DANMU_MSG':
-                        logger.debug(f'收到弹幕: {command["info"]}')
+                        if len(self.danmus) % 20 == 0:
+                            logger.debug(f'在直播间{self.room_id}收到{len(self.danmus)}条弹幕')
                         await self.process_danmu(command['info'])
                     elif command['cmd'] == 'SEND_GIFT':
                         logger.debug(f'收到礼物: {command["data"]["uname"]} 赠送 {command["data"]["num"]} 个 {command["data"]["giftName"]}')
@@ -381,9 +395,13 @@ class LiveService:
 
         async def stop_download(self):
             # 停止录制
+            logger.info(
+                f'录制结束: 录制时常 {round(time.time() - self.downloader.get_download_status().start_time)} 秒, 弹幕数量 {len(self.danmus)} 条')
             self.download_status = LiveService.DownloadStatus(status=LiveService.DownloadStatus.Status.FINISHED)
             await self.downloader.save_danmus(self.danmus)
+            self.download_status = None
             self.downloader.cancel()
+            self.message_stream_data = None
 
     class MessageKeyResponse(BaseModel):
 
@@ -403,7 +421,7 @@ class LiveService:
 
 async def test(monitor_room: LiveService.MonitorRoom):
     # 测试
-    await asyncio.sleep(120)
+    await asyncio.sleep(20)
     print('停止录制')
     await monitor_room.stop_download()
 
