@@ -1,18 +1,13 @@
-FROM ubuntu
+FROM python:3.9
 USER root
 WORKDIR /usr/src/app
-RUN apt-get update && apt-get install -y \
-    python3.9 \
-    python3-pip \
-    python3-dev \
-    build-essential \
-    libssl-dev \
-    libffi-dev \
-    python3-setuptools \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt *.py /usr/src/app/
-COPY ./services /usr/src/app/services
+COPY services /usr/src/app/services
 RUN pip install -U pip & pip install -r requirements.txt
-CMD [ "python3", "app.py" ]
+RUN wget https://www.johnvansickle.com/ffmpeg/old-releases/ffmpeg-4.4.1-amd64-static.tar.xz \
+    && tar xvf ffmpeg-4.4.1-amd64-static.tar.xz \
+    && mv ffmpeg-4.4.1-amd64-static/ffmpeg /usr/local/bin/ffmpeg \
+    && mv ffmpeg-4.4.1-amd64-static/ffprobe /usr/local/bin/ffprobe \
+    && rm -rf ffmpeg-4.4.1-amd64-static ffmpeg-4.4.1-amd64-static.tar.xz
+CMD ["python", "app.py"]
 

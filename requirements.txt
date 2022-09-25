@@ -3,6 +3,7 @@ aiohttp==3.8.3
 aiosignal==1.2.0
 async-timeout==4.0.2
 attrs==22.1.0
+Brotli==1.0.9
 certifi==2022.9.24
 charset-normalizer==2.1.1
 ffmpeg-python==0.2.0
