@@ -15,6 +15,7 @@ from services.danmu_converter import get_video_width_height, generate_ass
 from services.ass_render import fix_video
 from services.exceptions import DownloadPathException
 from services.uploader import BiliBiliLiveUploader
+from services.live_service import LiveService
 
 
 class Downloader:
@@ -93,6 +94,7 @@ class LiveDefaultDownloader(Downloader):
         super().__init__(url, room_config, room_info.data.room_id)
         self.download_status.target_path = room_config.auto_download_path
         self.room_info = room_info
+        self.live_service = LiveService()
 
     @logger.catch
     async def _download(self):
@@ -123,6 +125,8 @@ class LiveDefaultDownloader(Downloader):
                         return
                     logger.error(f'下载出错，正在重试')
                     logger.exception(e)
+                    logger.error(f'重新获取推流地址中...')
+                    self.url = await self.live_service.get_video_stream_url(self.room_info.data.room_id)
         logger.opt(colors=True).info(f'<yellow>下载完成</yellow> 直播间：{self.room_info.data.title}已关闭')
         logger.info('正在保存视频...')
         await fix_video(Path(self.download_status.target_path))
