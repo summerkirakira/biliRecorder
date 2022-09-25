@@ -13,7 +13,7 @@ class Config(BaseModel):
 
             download_type: DownloadType = DownloadType.DEFAULT
             custom_downloader: Optional[str] = None
-        download_format: str = '%title-%Y年%m%月%d%日-%H点%M分场'
+        download_format: str = '%title-%Y年%m月%d日-%H点%M分场'
 
         download: DownloadConfig = DownloadConfig()
 
@@ -26,7 +26,7 @@ class Config(BaseModel):
 
         class AutoUpload(BaseModel):
             enabled: bool = False
-            title: str = '【直播录制】%title-%Y年%m%月%d%日-%H点%M分场'
+            title: str = '【直播录制】%title-%Y年%m月%d日-%H点%M分场'
             desc: str = '直播录制'
             source: str = 'https://live.bilibili.com/'
             tags: list[str] = ['直播录制']
