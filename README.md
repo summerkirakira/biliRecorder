@@ -42,8 +42,8 @@ python app.py # 运行
 ```
 
 ## 配置文件
-配置文件在`config/config.json`中
-```json
+配置文件在`config/config.json`中 (如要复制以下内容请**删除**注释！)
+```yaml
 {
     "mid": 0, // biliRecorder所使用账户的用户id 0为匿名
     "SESSDATA": null, // biliRecorder所使用账户的SESSDATA，为null时为匿名
