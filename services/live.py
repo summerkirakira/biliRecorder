@@ -417,7 +417,7 @@ class LiveService:
         async def stop_download(self):
             # 停止录制
             logger.info(
-                f'录制结束: 录制时常 {round(time.time() - self.downloader.get_download_status().start_time)} 秒, 弹幕数量 {len(self.danmus)} 条')
+                f'录制结束: 录制时长 {round(time.time() - self.downloader.get_download_status().start_time)} 秒, 弹幕数量 {len(self.danmus)} 条')
             self.download_status = LiveService.DownloadStatus(status=LiveService.DownloadStatus.Status.FINISHED)
             await self.downloader.save_danmus(self.danmus)
             self.download_status = None
