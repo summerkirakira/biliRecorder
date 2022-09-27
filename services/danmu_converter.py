@@ -879,7 +879,7 @@ def generate_ass(xml: str, output: str, width: int, height: int):
         fontsize = 80
     try:
         Danmaku2ASS(f"{output}.temp", format, output, width, height, protect, font, fontsize, alpha, duration_marquee, duration_still, filter, filter_file, reduce)
-        os.remove(f"{output}.temp")
+        os.replace(f"{output}.temp", str(Path(output).with_suffix('.xml')))
     except Exception as e:
         print(e)
         sys.exit(1)
