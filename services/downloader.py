@@ -153,9 +153,22 @@ class LiveDefaultDownloader(Downloader):
 
         bill_uploader = BiliBiliLiveUploader()
 
-        bill_uploader.set_title(self.room_config.auto_upload.title.replace('%title', self.room_info.data.title)
-         )
-        bill_uploader.set_desc(self.room_config.auto_upload.desc)
+        bill_uploader.set_title(self.room_config.auto_upload.title.replace('%title', self.room_info.data.title))
+        ass_name = Path(self.download_status.target_path).with_suffix('.zh-CN.ass').name
+        file_name = Path(self.download_status.target_path).name
+        bill_uploader.set_desc(
+            time.strftime(
+                self.room_config.auto_upload.desc
+                    .replace('%title', self.room_info.data.title)
+                    .replace('%ass_name', ass_name)
+                    .replace('%file_name', file_name)
+                    .replace('%room_id', str(self.room_info.data.room_id))
+                    .replace('%uid', str(self.room_info.data.uid))
+                    .replace('%uname', self.user_info.data.card.name),
+                time.localtime()
+            )
+
+        )
         bill_uploader.set_tags(self.room_config.auto_upload.tags)
         bill_uploader.set_tid(self.room_config.auto_upload.tid)
         bill_uploader.set_source(self.room_config.auto_upload.source)
