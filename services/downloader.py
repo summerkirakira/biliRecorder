@@ -95,6 +95,7 @@ class LiveDefaultDownloader(Downloader):
         self.download_status.target_path = room_config.auto_download_path
         self.room_info = room_info
         self.live_service = LiveService()
+        self.start_time = time.localtime()
 
     @logger.catch
     async def _download(self):
@@ -111,6 +112,7 @@ class LiveDefaultDownloader(Downloader):
                      .replace('*', '_')
                      .replace('?', '_')
                      )
+        self.start_time = time.localtime()
         file_name = time.strftime(file_name, time.localtime()) + '.flv'
         self.download_status.target_path = str(self.path / self.user_info.data.card.name / file_name)
         async with aiofiles.open(self.path / self.user_info.data.card.name / file_name, 'wb') as f:
@@ -158,7 +160,12 @@ class LiveDefaultDownloader(Downloader):
 
         bill_uploader = BiliBiliLiveUploader()
 
-        bill_uploader.set_title(self.room_config.auto_upload.title.replace('%title', self.room_info.data.title))
+        bill_uploader.set_title(
+            time.strftime(
+                self.room_config.auto_upload.title.replace('%title', self.room_info.data.title),
+                self.start_time
+            )
+        )
         ass_name = Path(self.download_status.target_path).with_suffix('.zh-CN.ass').name
         file_name = Path(self.download_status.target_path).name
         bill_uploader.set_desc(
@@ -172,7 +179,6 @@ class LiveDefaultDownloader(Downloader):
                     .replace('%uname', self.user_info.data.card.name),
                 time.localtime()
             )
-
         )
         bill_uploader.set_tags(self.room_config.auto_upload.tags)
         bill_uploader.set_tid(self.room_config.auto_upload.tid)
