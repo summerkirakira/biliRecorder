@@ -105,6 +105,11 @@ class LiveDefaultDownloader(Downloader):
             (self.path / self.user_info.data.card.name).mkdir()
         file_name = (config.live_config.download_format
                      .replace('%title', self.room_info.data.title)
+                     .replace('/', '_')
+                     .replace('\\', '_')
+                     .replace(':', '_')
+                     .replace('*', '_')
+                     .replace('?', '_')
                      )
         file_name = time.strftime(file_name, time.localtime()) + '.flv'
         self.download_status.target_path = str(self.path / self.user_info.data.card.name / file_name)
