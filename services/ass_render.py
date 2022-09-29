@@ -38,17 +38,24 @@ async def fix_video(video_path: Path, transcode=False):
     #
     # return stdout, stderr
     input_video = ffmpeg.input(video_path.absolute())
-    if transcode:
-        out = ffmpeg.output(input_video, filename=video_path.with_suffix('.temp.flv').absolute(), vcodec='h264', acodec='aac')
-    else:
-        out = ffmpeg.output(input_video, filename=video_path.with_suffix('.temp.flv').absolute(), vcodec='copy', acodec='copy')
+    out = ffmpeg.output(input_video, filename=video_path.with_suffix('.temp.flv').absolute(), vcodec='copy',
+                        acodec='copy')
     try:
         out.run()
     except ffmpeg.Error as e:
         raise RuntimeError(f'修复视频文件出错：{e.stderr.decode("utf-8")}')
     os.remove(video_path)
     shutil.copy(video_path.with_suffix('.temp.flv').absolute(), video_path.absolute())
-    return
+    os.remove(video_path.with_suffix('.temp.flv').absolute())
+    if transcode:
+        out = ffmpeg.output(input_video, filename=video_path.with_suffix('.temp.flv').absolute(), vcodec='h264', acodec='aac')
+        try:
+            out.run()
+            os.remove(video_path)
+            shutil.copy(video_path.with_suffix('.temp.flv').absolute(), video_path.absolute())
+            os.remove(video_path.with_suffix('.temp.flv').absolute())
+        except ffmpeg.Error as e:
+            raise RuntimeError(f'修复视频文件出错：{e.stderr.decode("utf-8")}')
 
 
 if __name__ == '__main__':
