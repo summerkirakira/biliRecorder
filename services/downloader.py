@@ -136,7 +136,7 @@ class LiveDefaultDownloader(Downloader):
                     self.url = await self.live_service.get_video_stream_url(self.room_info.data.room_id)
         logger.opt(colors=True).info(f'<yellow>下载完成</yellow> 直播间：{self.room_info.data.title}已关闭')
         logger.info('正在保存视频...')
-        await fix_video(Path(self.download_status.target_path))
+        await fix_video(Path(self.download_status.target_path), transcode=self.room_config.transcode)
         logger.info('保存成功')
         if self.room_config.auto_upload.enabled:
             await self.upload()

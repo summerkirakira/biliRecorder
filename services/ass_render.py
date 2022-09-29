@@ -23,7 +23,7 @@ async def render_ass(video_path: Path):
 
 
 @logger.catch
-async def fix_video(video_path: Path):
+async def fix_video(video_path: Path, transcode=False):
     if not video_path.exists():
         raise FileNotFoundError(f'视频文件不存在：{video_path}')
     # p = subprocess.Popen(f'ffmpeg -y -i "{video_path.absolute()}" -codec copy "{video_path.with_suffix(".temp.flv").absolute()}"',
@@ -38,8 +38,14 @@ async def fix_video(video_path: Path):
     #
     # return stdout, stderr
     input_video = ffmpeg.input(video_path.absolute())
-    out = ffmpeg.output(input_video, filename=video_path.with_suffix('.temp.flv').absolute(), vcodec='copy', acodec='copy')
-    out.run()
+    if transcode:
+        out = ffmpeg.output(input_video, filename=video_path.with_suffix('.temp.flv').absolute(), vcodec='h264', acodec='aac')
+    else:
+        out = ffmpeg.output(input_video, filename=video_path.with_suffix('.temp.flv').absolute(), vcodec='copy', acodec='copy')
+    try:
+        out.run()
+    except ffmpeg.Error as e:
+        raise RuntimeError(f'修复视频文件出错：{e.stderr.decode("utf-8")}')
     os.remove(video_path)
     shutil.copy(video_path.with_suffix('.temp.flv').absolute(), video_path.absolute())
     return
@@ -47,5 +53,5 @@ async def fix_video(video_path: Path):
 
 if __name__ == '__main__':
     import asyncio
-    loop = asyncio.get_event_loop().run_until_complete(fix_video(Path(input('请输入视频文件路径：'))))
+    loop = asyncio.get_event_loop().run_until_complete(fix_video(Path(input('请输入视频文件路径：')), transcode=True))
 

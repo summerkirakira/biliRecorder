@@ -38,6 +38,7 @@ class Config(BaseModel):
         auto_download_path: Optional[str]
         auto_download_quality: Quality = Quality.SUPER
         auto_upload: AutoUpload = AutoUpload()
+        transcode: bool = False
     mid: int = 0
     SESSDATA: Optional[str]
     bili_jct: Optional[str]
