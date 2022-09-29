@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 import shutil
 from loguru import logger
+import ffmpeg
 
 
 @logger.catch
@@ -25,19 +26,26 @@ async def render_ass(video_path: Path):
 async def fix_video(video_path: Path):
     if not video_path.exists():
         raise FileNotFoundError(f'视频文件不存在：{video_path}')
-    p = subprocess.Popen(f'ffmpeg -y -i "{video_path.absolute()}" -codec copy "{video_path.with_suffix(".temp.flv").absolute()}"',
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-    stdout, stderr = p.communicate()
-    if p.returncode != 0:
-        raise RuntimeError(f'修复视频文件出错：{stderr.decode("utf-8")}')
-    else:
-        os.remove(video_path)
-        shutil.copy(video_path.with_suffix('.temp.flv').absolute(), video_path.absolute())
-        os.remove(video_path.with_suffix('.temp.flv').absolute())
-    return stdout, stderr
+    # p = subprocess.Popen(f'ffmpeg -y -i "{video_path.absolute()}" -codec copy "{video_path.with_suffix(".temp.flv").absolute()}"',
+    #                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    # stdout, stderr = p.communicate()
+    # if p.returncode != 0:
+    #     raise RuntimeError(f'修复视频文件出错：{stderr.decode("utf-8")}')
+    # else:
+    #     os.remove(video_path)
+    #     shutil.copy(video_path.with_suffix('.temp.flv').absolute(), video_path.absolute())
+    #     os.remove(video_path.with_suffix('.temp.flv').absolute())
+    #
+    # return stdout, stderr
+    input_video = ffmpeg.input(video_path.absolute())
+    out = ffmpeg.output(input_video, filename=video_path.with_suffix('.temp.flv').absolute(), vcodec='copy', acodec='copy')
+    out.run()
+    os.remove(video_path)
+    shutil.copy(video_path.with_suffix('.temp.flv').absolute(), video_path.absolute())
+    return
 
 
 if __name__ == '__main__':
     import asyncio
-    loop = asyncio.get_event_loop().run_until_complete(fix_video(Path("/Users/forever/PycharmProjects/biliRecorder/星际公民老A/BAR CITIZEN重庆线下聚会-2022年09月24日-12点15分场.flv")))
+    loop = asyncio.get_event_loop().run_until_complete(fix_video(Path(input('请输入视频文件路径：'))))
 
