@@ -109,6 +109,7 @@ class MonitorRoom:
             self.message_stream_data = LiveService.MessageKeyResponse.parse_obj(await response.json())
             return self.message_stream_data.data.token
 
+    @logger.catch
     async def init_message_ws(self):
         # 初始化弹幕流连接
         self.session = aiohttp.ClientSession(cookies=live_service.cookies, headers=self.default_headers)
