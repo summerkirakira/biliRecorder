@@ -133,7 +133,14 @@ class LiveDefaultDownloader(Downloader):
                     logger.error(f'下载出错，正在重试')
                     logger.exception(e)
                     logger.error(f'重新获取推流地址中...')
-                    self.url = await self.live_service.get_video_stream_url(self.room_info.data.room_id)
+                    while True:
+                        try:
+                            self.url = await self.live_service.get_video_stream_url(self.room_info.data.room_id)
+                            break
+                        except Exception as e:
+                            logger.error(f'获取推流地址出错，正在重试')
+                            logger.exception(e)
+                            await asyncio.sleep(1)
         logger.opt(colors=True).info(f'<yellow>下载完成</yellow> 直播间：{self.room_info.data.title}已关闭')
         logger.info('正在保存视频...')
         await fix_video(Path(self.download_status.target_path), transcode=self.room_config.transcode)
