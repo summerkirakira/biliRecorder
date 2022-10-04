@@ -301,6 +301,7 @@ class MonitorRoom:
         self.download_status = None
         self.downloader.cancel()
         self.message_stream_data = None
+        self.danmus = []
 
 
 async def test(monitor_room: MonitorRoom):
