@@ -1,5 +1,5 @@
 import aiohttp
-import asyncio
+import traceback
 from config import get_config, save_config, Config
 from typing import Optional
 from abc import abstractmethod
@@ -10,16 +10,16 @@ from enum import IntEnum
 from pathlib import Path
 import aiofiles
 from services.user_info import get_user_info_by_mid, UserInfo
-from services.util import Danmu
+from services.util import Danmu, concat_videos
 from services.danmu_converter import get_video_width_height, generate_ass
 from services.ass_render import fix_video
 from services.exceptions import DownloadPathException
 from services.uploader import BiliBiliLiveUploader
 from services.live_service import LiveService
+import asyncio
 
 
 class Downloader:
-
     running_downloaders: list['Downloader'] = []
 
     def __str__(self):
@@ -34,6 +34,7 @@ class Downloader:
             UNDEFINED = 3
             CANCELED = 4
             DOWNLOADING = 5
+
         current_downloaded_size: int = 0
         total_size: int = 0
         target_path: str = ''
@@ -63,6 +64,7 @@ class Downloader:
         self.download_status = self.DownloadStatus()
         self.user_info: Optional[UserInfo] = None
         self.running_downloaders.append(self)
+        self.damu_list: list[Danmu] = []
 
     @abstractmethod
     async def _download(self):
@@ -213,4 +215,166 @@ class LiveDefaultDownloader(Downloader):
         video_width, video_height = get_video_width_height(video_file)
         ass_file = video_file.with_suffix('.zh-CN.ass')
         generate_ass(Danmu.generate_danmu_xml(valid_danmus), str(ass_file), video_width, video_height)
+
+
+class LiveFfmpegDownloader(Downloader):
+
+    def __str__(self):
+        return f'[{self.__class__.__name__}] {self.path}, 房间号：{self.room_info.data.room_id})'
+
+    def __init__(self, url: str, room_config: Config.MonitorLiveRoom, room_info):
+        super().__init__(url, room_config, room_info.data.room_id)
+        self.download_status.target_path = room_config.auto_download_path
+        self.room_info = room_info
+        self.live_service = LiveService()
+        self.start_time = time.localtime()
+        self.download_file_list: list[Path] = []
+        self.download_process = None
+
+    @logger.catch
+    async def _download(self):
+        await super()._download()
+        self.user_info = await get_user_info_by_mid(self.room_info.data.uid)
+        config = get_config()
+        if not (self.path / self.user_info.data.card.name).exists():
+            (self.path / self.user_info.data.card.name).mkdir()
+        file_name = (config.live_config.download_format
+                     .replace('%title', self.room_info.data.title)
+                     .replace('/', '_')
+                     .replace('\\', '_')
+                     .replace(':', '_')
+                     .replace('*', '_')
+                     .replace('?', '_')
+                     )
+        self.start_time = time.localtime()
+        file_name = time.strftime(file_name, time.localtime()) + '.flv'
+        self.download_status.target_path = str(self.path / self.user_info.data.card.name / file_name)
+        self.download_status.status = self.DownloadStatus.Status.DOWNLOADING
+        while self.download_status.status != self.DownloadStatus.Status.CANCELED:
+            sliced_file_name = self.path / self.user_info.data.card.name / (file_name + f'.{len(self.download_file_list)}')
+            self.download_file_list.append(sliced_file_name)
+            try:
+                self.download_status.total_size = self.download_status.current_downloaded_size
+                # self.download_status.status = self.DownloadStatus.Status.DOWNLOADING
+                self.download_process = await asyncio.create_subprocess_exec(
+                    "ffmpeg",
+                    "-user_agent", f"User-Agent: {self.default_headers['User-Agent']}",
+                    "-headers", f"Referer: {self.default_headers['Referer']}",
+                    "-i", self.url,
+                    "-f", "flv",
+                    "-c", "copy", sliced_file_name.absolute(),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await self.download_process.communicate()
+                if self.download_process.returncode != 0 and self.download_status.status != self.DownloadStatus.Status.CANCELED:
+                    raise Exception("下载出错，正在重试: " + stderr.decode("utf-8"))
+
+            except Exception as e:
+                if self.download_status.status == self.DownloadStatus.Status.CANCELED:
+                    self.download_status.status = self.DownloadStatus.Status.UNDEFINED
+                    return
+                if "HTTP error 404 Not Found" not in str(e):
+                    self.download_file_list.append(sliced_file_name)
+                logger.debug(f'下载出错，正在重试: {traceback.format_exc()}')
+                logger.error(f'重新获取推流地址中...')
+                while True:
+                    try:
+                        self.url = await self.live_service.get_video_stream_url(self.room_info.data.room_id)
+                        break
+                    except Exception as e:
+                        logger.error(f'获取推流地址出错，正在重试')
+                        logger.exception(e)
+                        await asyncio.sleep(1)
+        logger.opt(colors=True).info(f'<yellow>下载完成</yellow> 直播间：{self.room_info.data.title}已关闭')
+        logger.info('正在保存视频...')
+        if len(self.download_file_list) == 1:
+            self.download_file_list[0].rename(self.download_status.target_path)
+        else:
+            await concat_videos(self.download_file_list, Path(self.download_status.target_path))
+        logger.info('保存成功')
+        logger.info('正在保存弹幕...')
+        await self.save_danmus(self.damu_list)
+        logger.info('保存成功')
+        if len(self.download_file_list) > 1:
+            for file in self.download_file_list:
+                if file.exists():
+                    file.unlink()
+        if self.room_config.auto_upload.enabled:
+            await self.upload()
+
+    async def upload(self):
+        if self.room_config.auto_upload.title is None:
+            logger.error('上传失败，标题不能为空')
+            return
+        if self.room_config.auto_upload.desc is None:
+            logger.error('上传失败，描述不能为空')
+            return
+        if self.room_config.auto_upload.tags is None:
+            logger.error('上传失败，标签不能为空')
+            return
+        if self.room_config.auto_upload.tid is None:
+            logger.error('上传失败，分区不能为空')
+            return
+        if self.room_config.auto_upload.source is None:
+            logger.error('上传失败，来源不能为空')
+            return
+
+        bill_uploader = BiliBiliLiveUploader()
+
+        bill_uploader.set_title(
+            time.strftime(
+                self.room_config.auto_upload.title.replace('%title', self.room_info.data.title),
+                self.start_time
+            )
+        )
+        ass_name = Path(self.download_status.target_path).with_suffix('.zh-CN.ass').name
+        file_name = Path(self.download_status.target_path).name
+        bill_uploader.set_desc(
+            time.strftime(
+                self.room_config.auto_upload.desc
+                    .replace('%title', self.room_info.data.title)
+                    .replace('%ass_name', ass_name)
+                    .replace('%file_name', file_name)
+                    .replace('%room_id', str(self.room_info.data.room_id))
+                    .replace('%uid', str(self.room_info.data.uid))
+                    .replace('%uname', self.user_info.data.card.name),
+                time.localtime()
+            )
+        )
+        bill_uploader.set_tags(self.room_config.auto_upload.tags)
+        bill_uploader.set_tid(self.room_config.auto_upload.tid)
+        bill_uploader.set_source(self.room_config.auto_upload.source)
+        if self.room_config.auto_upload.cover_path == 'AUTO':
+            bill_uploader.set_cover(f'{self.room_config.short_id}.jpg')
+        else:
+            bill_uploader.set_cover(self.room_config.auto_upload.cover)
+        bill_uploader.set_files([
+            {
+                'path': self.download_status.target_path,
+                'title': self.room_config.auto_upload.title,
+            }
+        ])
+        bill_uploader.start()
+
+        logger.info('正在上传视频...')
+
+    async def save_danmus(self, damus: list[Danmu]):
+        current_time = time.time() * 1000
+        valid_danmus = [damu for damu in damus if (current_time >= damu.send_time >= self.download_status.start_time)]
+        for damu in valid_danmus:
+            damu.appear_time = (damu.send_time - self.download_status.start_time * 1000) / 1000
+        video_file = Path(self.download_status.target_path)
+        if not video_file.exists():
+            while True:
+                video_file = Path(self.download_status.target_path)
+                if video_file.exists():
+                    break
+        video_width, video_height = get_video_width_height(video_file)
+        ass_file = video_file.with_suffix('.zh-CN.ass')
+        generate_ass(Danmu.generate_danmu_xml(valid_danmus), str(ass_file), video_width, video_height)
+
+    def cancel(self):
+        self.download_status.status = self.DownloadStatus.Status.CANCELED
+        self.download_process.kill()
 
