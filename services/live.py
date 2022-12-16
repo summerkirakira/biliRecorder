@@ -7,7 +7,7 @@ from typing import Optional
 import asyncio
 import aiohttp
 import json
-from services.downloader import LiveDefaultDownloader
+from services.downloader import LiveDefaultDownloader, LiveFfmpegDownloader
 import websockets
 import zlib
 from loguru import logger
@@ -38,7 +38,7 @@ class MonitorRoom:
         self.room_config = room_config
         self.room_info: Optional[RoomInfo] = None
         self.download_status: Optional[LiveService.DownloadStatus] = None
-        self.downloader: Optional[LiveDefaultDownloader] = None
+        self.downloader: Optional[LiveFfmpegDownloader] = None
         self.message_stream_data = None
         self.session = None
         self.message_ws = None
@@ -68,7 +68,7 @@ class MonitorRoom:
                     self.live = False
                     await self.stop_download()
             except Exception as e:
-                logger.error(f'更新房间信息失败: {e}')
+                logger.debug(f'更新房间信息失败: {e}')
             await asyncio.sleep(10)
 
     async def download_live_image(self, url: str):
@@ -85,7 +85,7 @@ class MonitorRoom:
             """
         self.download_status = LiveService.DownloadStatus(status=LiveService.DownloadStatus.Status.DOWNLOADING)
         try:
-            self.downloader = LiveDefaultDownloader(url, self.room_config, self.room_info)
+            self.downloader = LiveFfmpegDownloader(url, self.room_config, self.room_info)
         except DownloadPathException as e:
             logger.error(f'请在配置文件中指定下载路径！: {e}')
             exit(1)
@@ -96,7 +96,7 @@ class MonitorRoom:
                 self.downloader = None
                 return
             logger.info(
-                f'正在录制直播间: {self.room_info.data.title}({self.room_info.data.room_id if self.room_info.data.short_id == 0 else self.room_info.data.short_id})，已录制: {self.downloader.get_download_status().current_downloaded_size / 1024 / 1024:.2f}MB')
+                f'正在录制直播间: {self.room_info.data.title}({self.room_info.data.room_id if self.room_info.data.short_id == 0 else self.room_info.data.short_id})')
             await asyncio.sleep(10)
 
     async def get_live_message_stream_key(self, room_id: int) -> str:
@@ -170,7 +170,7 @@ class MonitorRoom:
                 try:
                     await self.handle_message(message)
                 except Exception as e:
-                    logger.error(f'处理消息失败: {e}')
+                    logger.debug(f'处理消息失败: {e}')
             except Exception as e:
                 logger.error(f'接收消息出错: {e}')
                 break
@@ -205,7 +205,7 @@ class MonitorRoom:
             for command in commands:
                 if command['cmd'] == 'DANMU_MSG':
                     if len(self.danmus) % 20 == 0:
-                        logger.debug(f'在直播间{self.room_id}收到{len(self.danmus)}条弹幕')
+                        logger.info(f'在直播间{self.room_id}收到{len(self.danmus)}条弹幕')
                     await self.process_danmu(command['info'])
                 elif command['cmd'] == 'SEND_GIFT':
                     logger.debug(
@@ -297,18 +297,35 @@ class MonitorRoom:
         logger.info(
             f'录制结束: 录制时长 {round(time.time() - self.downloader.get_download_status().start_time)} 秒, 弹幕数量 {len(self.danmus)} 条')
         self.download_status = LiveService.DownloadStatus(status=LiveService.DownloadStatus.Status.FINISHED)
-        await self.downloader.save_danmus(self.danmus)
-        self.download_status = None
+        self.downloader.damu_list = self.danmus
         self.downloader.cancel()
+        self.download_status = None
         self.message_stream_data = None
         self.danmus = []
+
+    async def test_slice_video(self):
+        self.downloader.download_process.kill()
+        await asyncio.sleep(10)
+        self.downloader.download_process.kill()
+        await asyncio.sleep(10)
+        self.downloader.download_process.kill()
+        await asyncio.sleep(10)
+        self.downloader.download_process.kill()
+        await asyncio.sleep(10)
+        self.downloader.download_process.kill()
+        await asyncio.sleep(10)
+        self.downloader.download_process.kill()
+        await asyncio.sleep(10)
+        self.downloader.download_process.kill()
+        await asyncio.sleep(10)
+        await self.stop_download()
 
 
 async def test(monitor_room: MonitorRoom):
     # 测试
     await asyncio.sleep(20)
     print('停止录制')
-    await monitor_room.stop_download()
+    await monitor_room.test_slice_video()
 
 
 live_service = LiveService()

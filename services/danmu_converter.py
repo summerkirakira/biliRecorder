@@ -15,6 +15,7 @@ import time
 import xml.dom.minidom
 import ffmpeg
 from pathlib import Path
+from loguru import logger
 
 if sys.version_info < (3,):
     raise RuntimeError('at least Python 3.0 is required')
@@ -881,12 +882,22 @@ def generate_ass(xml: str, output: str, width: int, height: int):
         Danmaku2ASS(f"{output}.temp", format, output, width, height, protect, font, fontsize, alpha, duration_marquee, duration_still, filter, filter_file, reduce)
         os.replace(f"{output}.temp", str(Path(output).with_suffix('.xml')))
     except Exception as e:
-        print(e)
+        # print(e)
         sys.exit(1)
 
 
 def get_video_width_height(path: Path) -> (int, int):
-    media_info = ffmpeg.probe(str(path))
+    try:
+        media_info = ffmpeg.probe(str(path))
+    except ffmpeg.Error as e:
+        logger.error(e.stderr)
+        print(e.stderr, file=sys.stderr)
+        media_info = {
+            "streams": [{
+                "width": 1920,
+                "height": 1080
+            }]
+        }
     for stream in media_info['streams']:
         if 'width' in stream:
             width = stream['width']
